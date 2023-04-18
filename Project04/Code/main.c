@@ -205,6 +205,16 @@ int main(int argc, char *argv[]) {
     
   }
 
+  // TODO: Measure start time here!
+  struct timeval t1;
+  struct timeval t2;
+
+  //get start time
+  gettimeofday(&t1, NULL);
+  time_t startTime = t1.tv_sec;
+  double startMicTime = (t1.tv_usec / 1000000.0);
+  double actualStartTime = (double) startTime + startMicTime;
+
   // Initialize locks
   pthread_mutex_init(&LockStack, 0);
   pthread_mutex_init(&LockTable, 0);
@@ -260,6 +270,16 @@ int main(int argc, char *argv[]) {
   fPct = (float)gPacketHitBytes / (float)gPacketSeenBytes * 100.0;
 
   printf("  Total Duplicate Percent: %6.2f%%\n", fPct);
+
+  // TODO: Measure stop time here!
+  //  Output the total runtime in an appropriate unit
+  //get stopping time
+  gettimeofday(&t2, NULL);
+  time_t stopTime = t2.tv_sec;
+  double stopMicTime = (t2.tv_usec / 1000000.0);
+  double actualStopTime = (double) stopTime + stopMicTime;
+
+  printf("Total Runtime (in seconds): %lf\n", (actualStopTime - actualStartTime));
 
   return 0;
   
