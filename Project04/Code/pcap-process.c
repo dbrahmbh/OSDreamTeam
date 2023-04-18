@@ -104,8 +104,8 @@ void processPacket(struct Packet *pPacket) {
     return;
   }
 
-  printf("STARTFUNC: processPacket (Packet Size %d)\n",
-         pPacket->LengthIncluded);
+  // printf("STARTFUNC: processPacket (Packet Size %d)\n",
+        //  pPacket->LengthIncluded);
 
   /* Step 1: Should we process this packet or ignore it?
    *    We should ignore it if:
@@ -127,7 +127,7 @@ void processPacket(struct Packet *pPacket) {
 
   if ((pPacket->Data[12] != 0x08) || (pPacket->Data[13] != 0x00)) {
 
-    printf("Not IP - ignoring...\n");
+    // printf("Not IP - ignoring...\n");
     discardPacket(pPacket);
     return;
   }
@@ -171,7 +171,7 @@ void processPacket(struct Packet *pPacket) {
     return;
   }
 
-  printf("  processPacket -> Found an IP packet that is TCP or UDP\n");
+  // printf("  processPacket -> Found an IP packet that is TCP or UDP\n");
 
   uint16_t NetPayload;
 

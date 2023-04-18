@@ -17,7 +17,7 @@
 #include "pcap-process.h"
 #include "pcap-read.h"
 
-#define SHOW_DEBUG 1
+#define SHOW_DEBUG 0
 
 // Max number of files that can be read, and max length each file can be
 #define MAX_SIZE 100
