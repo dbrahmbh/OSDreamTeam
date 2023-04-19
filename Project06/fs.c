@@ -49,7 +49,7 @@ void fs_debug()
 	union fs_block block;
 
 	// Initial disk read
-	disk_read(0,block.data);
+	disk_read(0, block.data);
 
 	// Verify the magic number
     if (block.super.magic != FS_MAGIC) {
@@ -59,9 +59,9 @@ void fs_debug()
 
 	// Initial print
 	printf("superblock:\n");
-	printf("    %d blocks\n",block.super.nblocks);
-	printf("    %d inode blocks\n",block.super.ninodeblocks);
-	printf("    %d inodes\n",block.super.ninodes);
+	printf("    %d blocks\n", block.super.nblocks);
+	printf("    %d inode blocks\n", block.super.ninodeblocks);
+	printf("    %d inodes\n", block.super.ninodes);
 
 	// Initialize vaiables
     int inodeblocksNum = block.super.ninodeblocks;
@@ -71,42 +71,45 @@ void fs_debug()
     int inodeNum;
 	int dataBlockNum;
 	
-	// Initialize a new indirect block, not the same as the block from above
-    union fs_block indirectBlock;
+	// Initialize a new inode block and indirect block
+    union fs_block inodeBlock;
+	union fs_block indirectBlock;
 
     // For loop to iterate through all the inodeblocks
     for (i = 1; i < inodeblocksNum + 1; i++) {
 
         // Use disk_read function to read the data from the blocks
-        disk_read(i, block.data);
+        disk_read(i, inodeBlock.data);
 
 		// For loop to go through all the inodes in an individual block
         for(j = 0; j < INODES_PER_BLOCK; j++) {
 
             // Check if the inode is valid
-            if (block.inode[j].isvalid == 1) {
+            if (inodeBlock.inode[j].isvalid == 1) {
 
 				// Set up the inode number
-                //inodeNum = (i - 1) * INODES_PER_BLOCK + j + 1;
 				inodeNum = (i - 1) * INODES_PER_BLOCK + j;
 
 				// Print the individual inode's data
                 printf("inode %d:\n", inodeNum);
-                printf("    size: %d bytes\n", block.inode[j].size);
+                printf("    size: %d bytes\n", inodeBlock.inode[j].size);
                 printf("    direct blocks:");
 
                 // For loop to parse through all existing pointers in inode 'j'
                 for (k = 0; k < POINTERS_PER_INODE; k++) {
 					
 					// Check if the blocks are direct blocks
-                    if (block.inode[j].direct[k]) {
+                    if (inodeBlock.inode[j].direct[k]) {
+						
+						// Check if the direct block is out of range before printing
+                        if (inodeBlock.inode[j].direct[k] < inodeblocksNum + 1 || inodeBlock.inode[j].direct[k] >= block.super.nblocks) {
+							
+							printf("Error: Direct block out of range\n");
+        					return;
 
-						// Check if the direct block is out of range
-                        if (block.inode[j].direct[k] < inodeblocksNum + 1 || block.inode[j].direct[k] >= block.super.nblocks) {
-                            printf(" %d ", block.inode[j].direct[k]);
                         }
                         else {
-                            printf(" %d ", block.inode[j].direct[k]);
+							printf(" %d ", inodeBlock.inode[j].direct[k]);
                         }
 
                     }
@@ -116,20 +119,26 @@ void fs_debug()
 				// Print out a new line for readability
                 printf("\n");
 
-				// Check if indirect blocks exist, if so print their information
-                if (block.inode[j].indirect > 0) {
+				// Check if indirect blocks exist
+                if (inodeBlock.inode[j].indirect > 0) {
 
 					// Check if the indirect block is out of range
-                    if (block.inode[j].indirect < inodeblocksNum + 1 || block.inode[j].indirect >= block.super.nblocks) {
+                    if (inodeBlock.inode[j].indirect < inodeblocksNum + 1 || inodeBlock.inode[j].indirect >= block.super.nblocks) {
 						
+						printf("Error: Indirect block out of range\n");
+						return;
+					
+                	}
+					else {
+
+						// Read in indirect block data
+						disk_read(inodeBlock.inode[j].indirect, indirectBlock.data);
+
 						// Print out info for indirect block
-						printf("    indirect block: %d \n", block.inode[j].indirect);
+						printf("    indirect block: %d \n", inodeBlock.inode[j].indirect);
 
 						// Print out info for inderect data blocks
 						printf("    indirect data blocks:");
-
-						// Use disk read function to access the indirect block
-						disk_read(block.inode[j].indirect, indirectBlock.data);
 
 						// For loop to iterate through all the pointers in the individual block
 						for (k = 0; k < POINTERS_PER_BLOCK; k++) {
@@ -140,12 +149,13 @@ void fs_debug()
 								// Calculate the data block number
                             	dataBlockNum = indirectBlock.pointers[k];
 
-                        		// Check if the data block is out of range
+                        		// Check if the data block is out of range before printing
                             	if (dataBlockNum < inodeblocksNum + 1 || dataBlockNum >= block.super.nblocks) {
-                                	printf(" %d ", dataBlockNum);
+                                	printf("Error: Data block is out of range\n");
+									return;
 								}
 								else {
-									printf("%d ", indirectBlock.pointers[k]);
+									printf(" %d ", indirectBlock.pointers[k]);
 								}
 								
 							}
@@ -154,8 +164,8 @@ void fs_debug()
 
 						// Print out a new line for readability
                     	printf("\n");
-					
-                	}
+
+					}
             	}
         	}
     	}
