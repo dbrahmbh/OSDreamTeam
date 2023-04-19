@@ -22,9 +22,6 @@ Experiment 1 - Changing Threads in Test.pcap:
 
 8 threads: 1.058016 s
 
-9 threads: 1.080991 s
-
-10 threads: 1.155531 s
 
 
 
