@@ -681,6 +681,16 @@ int fs_write( int inumber, const char *data, int length, int offset )
 	// the number of bytes request, perhaps if the disk becomes full. If the given inumber is invalid, or
 	// any other error is encountered, return 0.
 
+	// Check if file system is mounted
+	if (!isMounted) {
+        printf("Error: Filesystem not mounted\n");
+        return 0;
+    }
+
+	/// **** FUNCTIONALITY MISSING ****
+
+
+
 	return 0;
-	
+
 }
