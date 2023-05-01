@@ -121,7 +121,7 @@ void fs_debug()
 			if (inodeBlock.inode[j].isvalid == 1) {
 
 				// Set up the inode number
-				inodeNum = (i - 1) * INODES_PER_BLOCK + j;
+				inodeNum = (i - 1) * INODES_PER_BLOCK + j + 1;
 
 				// Print the individual inode's data
 				printf("inode %d:\n", inodeNum);
@@ -386,7 +386,7 @@ int fs_create()
 				disk_write(thedisk, i, block.data);
 
 				// Calculate inumber
-				inumber = (i - 1) * INODES_PER_BLOCK + j;
+				inumber = ((i - 1) * INODES_PER_BLOCK) + j + 1;
 
 				// Return inumber
 				return inumber;
