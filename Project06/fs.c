@@ -22,13 +22,13 @@ bool isMounted = false;
 int * freeBitmapBlock;
 time_t timeTemp;
 
-// Define a flag variable to track if disk_read aborted
-static bool diskReadAborted = false;
+// Define a flag variable to track if disk aborted
+static bool diskAborted = false;
 
 // Signal handler to catch abort signal
 void abort_handler(int sig) {
 
-    diskReadAborted = true;
+    diskAborted = true;
     signal(sig, SIG_DFL);
     abort();
 
@@ -552,120 +552,104 @@ int fs_read( int inumber, char *data, int length, int offset )
 
 	// Check if file system is mounted
 	if (!isMounted) {
-        printf("Error: Filesystem not mounted\n");
+		printf("Error: Filesystem not mounted\n");
+		return 0;
+	}
+
+	// Initialize block, inodeBlock, iOffset, and read block data
+	union fs_block block;
+	size_t inodeBlock = (inumber / INODES_PER_BLOCK) + 1;
+	size_t iOffset = inumber % INODES_PER_BLOCK;
+	disk_read(thedisk, inodeBlock, block.data);
+
+    // Check if inode is valid
+    if (!block.inode[iOffset].isvalid) {
+        printf("Error: Inode is not valid\n");
         return 0;
     }
 
-	// Initialize block and read data
-    union fs_block block;
-    disk_read(thedisk, 0, block.data);
-
-	//Initialize data block index and offset, as well as inode block and offset
-    size_t dataOffset = offset % BLOCK_SIZE;
-    size_t dataBlock  = offset / BLOCK_SIZE;
-    size_t inodeBlock = inumber / INODES_PER_BLOCK + 1;
-    size_t iOffset = inumber % INODES_PER_BLOCK;
-
-	// Reset flag variable
-    diskReadAborted = false;
-
-    // Set signal handler to catch abort signal
-    signal(SIGABRT, abort_handler);
-
-    // Check if disk_read fails
-    disk_read(thedisk, inodeBlock, block.data);
-
-    // Check if disk_read aborted
-    if (diskReadAborted) {
-		printf("Error: Disk read failed\n");
-        return -1;
+    // Check if offset is valid
+    if (offset > block.inode[iOffset].size) {
+        printf("Error: Offset is greater than file size\n");
+        return 0;
     }
 
-	// Check if the inodes are valid
-    if (!block.inode[iOffset].isvalid) {
-		return -1;
-	}
+    // Calculate the starting data block index and offset
+    size_t blockIndex = offset / BLOCK_SIZE;
+    size_t dataOffset = offset % BLOCK_SIZE;
 
-	// Check if offset is valid
-    if (offset > block.inode[iOffset].size) {
-		return -1;
-	}
-
-	// Read data into the block and initialize bytes read
-    disk_read(thedisk, 0, block.data);
+	// Initialize bytes read
     int bytesRead = 0;
-   
-	// While loop as long as offset is smaller than size and bytes read are smaller than the length
-    while (offset < block.inode[iOffset].size && bytesRead < length){
-		// Initialize pointer
-		size_t pointer = 0;
 
-        // Iterate through the pointers in the data block to check direct blocks
-        if (dataBlock < POINTERS_PER_INODE) {
-            pointer = block.inode[iOffset].direct[dataBlock];
-        // Else if for indirect blocks
-        } else if (block.inode[iOffset].indirect) {
+    // Read the data blocks while the conditions are valid
+    while (blockIndex < POINTERS_PER_INODE && bytesRead < length && offset < block.inode[iOffset].size) {
 
-			// Initialize indirect block
-            union fs_block indirectBlock;
+		// Initialize block address
+        size_t blockAddress = block.inode[iOffset].direct[blockIndex];
 
-			// Reset flag variable
-			diskReadAborted = false;
+        // Initialize a data block and read it
+        union fs_block dataBlock;
+        disk_read(thedisk, blockAddress, dataBlock.data);
 
-			// Set signal handler to catch abort signal
-			signal(SIGABRT, abort_handler);
+        // Iterate through the block to copy data to the buffer
+        for (int i = dataOffset; i < BLOCK_SIZE && bytesRead < length && offset < block.inode[iOffset].size; i++) {
 
-			// Check if disk_read fails
-			disk_read(thedisk, block.inode[iOffset].indirect, indirectBlock.data);
+			// Copy the data
+            data[bytesRead] = dataBlock.data[i];
 
-			// Check if disk_read aborted
-			if (diskReadAborted) {
-				printf("Error: Disk read failed\n");
-				return -1;
-			}
-
-			// Update pointer
-            pointer = indirectBlock.pointers[dataBlock - POINTERS_PER_INODE];
-
-        }
-
-		// Reset flag variable
-		diskReadAborted = false;
-
-		// Set signal handler to catch abort signal
-		signal(SIGABRT, abort_handler);
-
-		// Check if disk_read fails
-		disk_read(thedisk, pointer, block.data);
-
-		// Check if disk_read aborted
-		if (diskReadAborted) {
-			printf("Error: Disk read failed\n");
-			return -1;
-		}
-
-		// Iterate through the blocks before reaching block size
-        for (int i = (dataOffset % BLOCK_SIZE); i < BLOCK_SIZE; i++) {
-
-			// Check if offset is greater than the size or if the bytes read are greater than the length to break
-            if (offset >= block.inode[iOffset].size || bytesRead >= length) {
-                break;
-            }
-
-			// Update the data in the block
-            data[bytesRead] = block.data[i];
-
-			// Increase the offset and the bytes read
-            offset++;
+			// Increment bytes read and offset
             bytesRead++;
+            offset++;
 
         }
 
-		// Re-initialize data offset
+        // Update the data offset to 0
         dataOffset = 0;
 
-		// Increment data block
-        dataBlock++;
+        // Move to the next block
+        blockIndex++;
+
+    }
+
+    // Iterate through to read data from the indirect blocks, if any
+    if (blockIndex < POINTERS_PER_INODE && block.inode[iOffset].indirect) {
+
+		// Initialize block address
+        size_t blockAddress = block.inode[iOffset].indirect;
+
+        // Initialize a new indirect block and read it
+        union fs_block indirectBlock;
+        disk_read(thedisk, blockAddress, indirectBlock.data);
+
+        // While conditions hold, read data from the indirect blocks
+        while (blockIndex < POINTERS_PER_INODE + POINTERS_PER_BLOCK && bytesRead < length && offset < block.inode[iOffset].size) {
+
+			// Initialize block address
+            size_t blockAddress = indirectBlock.pointers[blockIndex - POINTERS_PER_INODE];
+
+            // Initialize and read a data block
+            union fs_block dataBlock;
+            disk_read(thedisk, blockAddress, dataBlock.data);
+
+            // Iterate through the block to copy data to the buffer
+            for (int i = dataOffset; i < BLOCK_SIZE && bytesRead < length && offset < block.inode[iOffset].size; i++) {
+
+				// Copy the data
+                data[bytesRead] = dataBlock.data[i];
+
+				// Increment bytes read and the offset
+                bytesRead++;
+                offset++;
+
+            }
+
+            // Update the data offset
+            dataOffset = 0;
+
+            // Move to the next block
+        	blockIndex++;
+
+        }
 
     }
 
@@ -691,5 +675,4 @@ int fs_write( int inumber, const char *data, int length, int offset )
     }
 
 	return 0;
-	
 }
