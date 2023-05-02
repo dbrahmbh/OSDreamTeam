@@ -24,6 +24,7 @@ time_t timeTemp;
 
 // Global variables
 union fs_block currentFreeBlock;
+#define MAX_BLOCKS_PER_FILE 150
 
 // Function to create a new filesystem on the disk and destroy any data already present
 int fs_format()
@@ -656,11 +657,190 @@ int fs_write( int inumber, const char *data, int length, int offset )
 	// the number of bytes request, perhaps if the disk becomes full. If the given inumber is invalid, or
 	// any other error is encountered, return 0.
 
-	// Check if file system is mounted
+	// Check if the file system is mounted
 	if (!isMounted) {
-        printf("Error: Filesystem not mounted\n");
-        return 0;
-    }
+		printf("Error: Filesystem not mounted\n");
+		return 0;
+	}
 
-	return 0;
+	// Initialize block, inodeBlock, iOffset, and read block data
+	union fs_block block;
+	size_t inodeBlock = (inumber / INODES_PER_BLOCK) + 1;
+	size_t iOffset = inumber % INODES_PER_BLOCK;
+	disk_read(thedisk, inodeBlock, block.data);
+
+	// Check if the inode is valid
+	if (!block.inode[iOffset].isvalid) {
+		printf("Error: Inode is not valid\n");
+		return 0;
+	}
+
+	// Check if the offset is valid
+	if (offset > block.inode[iOffset].size) {
+		printf("Error: Offset is greater than file size\n");
+		return 0;
+	}
+
+	// Initialize the bytes written
+	int bytesWritten = 0;
+
+	// Calculate the starting data block index and offset
+	size_t blockIndex = offset / BLOCK_SIZE;
+	size_t dataOffset = offset % BLOCK_SIZE;
+
+	// While the conditions are valid, write the data blocks
+	while (blockIndex < POINTERS_PER_INODE && bytesWritten < length) {
+
+		// If the block is not allocated, allocate it
+		if (block.inode[iOffset].direct[blockIndex] == 0) {
+			
+			// Allocate the block
+			block.inode[iOffset].direct[blockIndex] = freeBitmapBlock[block.inode[iOffset].direct[blockIndex]] = 0;
+
+			// Check if the disk is full and return the bytes written
+			if (block.inode[iOffset].direct[blockIndex] == 0) {
+				printf("Error: Disk is full\n");
+				return bytesWritten;
+			}
+
+			// Increase the size of the block
+			block.inode[iOffset].size += BLOCK_SIZE;
+
+			// Write data to the disk
+			disk_write(thedisk, inodeBlock, block.data);
+
+		}
+
+		// Initialize block address
+		size_t blockAddress = block.inode[iOffset].direct[blockIndex];
+
+		// Initialize a data block and read it
+		union fs_block dataBlock;
+		disk_read(thedisk, blockAddress, dataBlock.data);
+
+		// Iterate through the block to copy data from the buffer
+		for (int i = dataOffset; i < BLOCK_SIZE && bytesWritten < length; i++) {
+
+			// Copy the data
+			dataBlock.data[i] = data[bytesWritten];
+
+			// Increment bytes written and offset
+			bytesWritten++;
+			offset++;
+
+		}
+
+		// Write the modified data block to disk
+		disk_write(thedisk, blockAddress, dataBlock.data);
+
+		// Update the data offset to 0
+		dataOffset = 0;
+
+		// Move to the next block
+		blockIndex++;
+
+	}
+
+	// Iterate through to write data to the indirect blocks, if any
+	if (blockIndex < POINTERS_PER_INODE) {
+
+		// If the indirect block is not allocated, allocate it
+		if (!block.inode[iOffset].indirect) {
+
+			// Allocate the block
+			block.inode[iOffset].indirect = freeBitmapBlock[block.inode[iOffset].indirect] = 0;
+
+			// Check if disk is full and return bytes written
+			if (!block.inode[iOffset].indirect) {
+				printf("Error: Disk is full\n");
+				return bytesWritten;
+			}
+
+			// Increase the inode size
+			block.inode[iOffset].size += BLOCK_SIZE;
+
+			// Write data to disk
+			disk_write(thedisk, inodeBlock, block.data);
+
+		}
+
+		// Initialize block address
+		size_t blockAddress = block.inode[iOffset].indirect;
+
+		// Initialize a new indirect block and read it
+		union fs_block indirectBlock;
+		disk_read(thedisk, blockAddress, indirectBlock.data);
+
+		// While conditions are met, iterate through the indirect block to allocate and write data blocks
+		while (blockIndex < MAX_BLOCKS_PER_FILE && bytesWritten < length) {
+
+			// If the block is not allocated, allocate it
+			if (indirectBlock.pointers[blockIndex - POINTERS_PER_INODE] == 0) {
+
+				// Allocate the block
+				indirectBlock.pointers[blockIndex - POINTERS_PER_INODE] = freeBitmapBlock[indirectBlock.pointers[blockIndex - POINTERS_PER_INODE]] = 0;
+
+				// Check if disk is full
+				if (indirectBlock.pointers[blockIndex - POINTERS_PER_INODE] == 0) {
+					printf("Error: Disk is full\n");
+					return bytesWritten;
+				}
+
+				// Increase the inode size
+				block.inode[iOffset].size += BLOCK_SIZE;
+
+				// Write data to the disk
+				disk_write(thedisk, inodeBlock, block.data);
+
+			}
+
+			// Initialize the data block address
+			size_t dataBlockAddress = indirectBlock.pointers[blockIndex - POINTERS_PER_INODE];
+
+			// Initialize a data block and read it
+			union fs_block dataBlock;
+			disk_read(thedisk, dataBlockAddress, dataBlock.data);
+
+			// Iterate through the block to copy data from the buffer
+			for (int i = dataOffset; i < BLOCK_SIZE && bytesWritten < length; i++) {
+
+				// Copy the data
+				dataBlock.data[i] = data[bytesWritten];
+
+				// Increment bytes written and offset
+				bytesWritten++;
+				offset++;
+
+			}
+
+			// Write the modified data block to disk
+			disk_write(thedisk, dataBlockAddress, dataBlock.data);
+
+			// Update the data offset to 0
+			dataOffset = 0;
+
+			// Move to the next block
+			blockIndex++;
+
+		}
+
+		// Write the modified indirect block to the disk
+		disk_write(thedisk, blockAddress, indirectBlock.data);
+
+	}
+
+	// Check if the offset plus the length is greater than the size
+	if (offset + length > block.inode[iOffset].size) {
+
+		// Update the inode size
+		block.inode[iOffset].size = offset + length;
+
+		// Write data to the disk
+		disk_write(thedisk, inodeBlock, block.data);
+
+	}
+
+	// Return the number of bytes actually written
+	return bytesWritten;
+
 }
