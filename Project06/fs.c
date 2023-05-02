@@ -22,8 +22,20 @@ bool isMounted = false;
 int * freeBitmapBlock;
 time_t timeTemp;
 
+// Define a flag variable to track if disk_read aborted
+static bool diskReadAborted = false;
+
+// Signal handler to catch abort signal
+void abort_handler(int sig) {
+
+    diskReadAborted = true;
+    signal(sig, SIG_DFL);
+    abort();
+
+}
+
 // Global variables
-union fs_block currentFreeBlock; 
+union fs_block currentFreeBlock;
 
 // Function to create a new filesystem on the disk and destroy any data already present
 int fs_format()
@@ -548,133 +560,124 @@ int fs_read( int inumber, char *data, int length, int offset )
     union fs_block block;
     disk_read(thedisk, 0, block.data);
 
-	// Initialize inodes number, block number, and offset before reading data
-    int inodesNum = block.super.ninodes;
-    int blockNum = (inumber - 1) / INODES_PER_BLOCK + 1;
-    int offsetI = (inumber - 1) % INODES_PER_BLOCK;
-    disk_read(thedisk, blockNum, block.data);
+	//Initialize data block index and offset, as well as inode block and offset
+    size_t dataOffset = offset % BLOCK_SIZE;
+    size_t dataBlock  = offset / BLOCK_SIZE;
+    size_t inodeBlock = inumber / INODES_PER_BLOCK + 1;
+    size_t iOffset = inumber % INODES_PER_BLOCK;
 
-	// Initialize variables for iteration
-    int i = 0;
-    int j = 0;
-    int k = 0;
-    int l = 0;
+	// Reset flag variable
+    diskReadAborted = false;
 
-	// Initialize inode block
-    union fs_block inodeBlock;
+    // Set signal handler to catch abort signal
+    signal(SIGABRT, abort_handler);
 
-	// Initialize bytes and head and curr counters to track
-    int bytesR = 0;
-    int headB = offset / BLOCK_SIZE;
-    int headO = offset % BLOCK_SIZE;
-    int currB = 0;
-    int currO = 0;
+    // Check if disk_read fails
+    disk_read(thedisk, inodeBlock, block.data);
 
-	// Initialize indirect block
-    union fs_block indirectBlock;
-
-	// Check if the number is invalid
-    if (inumber > inodesNum || inumber < 1) {
-        printf("Error: Invalid number\n");
-        return 0;
+    // Check if disk_read aborted
+    if (diskReadAborted) {
+		printf("Error: Disk read failed\n");
+        return -1;
     }
 
-	// Check if the inode number exists
-    if (block.inode[offsetI].isvalid == 0) {
-        printf("Error: Inode number doesn't exist\n");
-        return 0;
-    }
+	// Check if the inodes are valid
+    if (!block.inode[iOffset].isvalid) {
+		return -1;
+	}
 
-	// Iterate through the pointers in an inode
-    for (i = 0; i < POINTERS_PER_INODE; i++) {
+	// Check if offset is valid
+    if (offset > block.inode[iOffset].size) {
+		return -1;
+	}
 
-		// Check if direct blocks exist
-        if (block.inode[offsetI].direct[i] > 0) {
+	// Read data into the block and initialize bytes read
+    disk_read(thedisk, 0, block.data);
+    int bytesRead = 0;
+   
+	// While loop as long as offset is smaller than size and bytes read are smaller than the length
+    while (offset < block.inode[iOffset].size && bytesRead < length){
+		// Initialize pointer
+		size_t pointer = 0;
 
-			// Check if head is greater than the current to update the current
-            if (currB < headB) {
-                currB++;
-                continue;
-            }
+        // Iterate through the pointers in the data block to check direct blocks
+        if (dataBlock < POINTERS_PER_INODE) {
+            pointer = block.inode[iOffset].direct[dataBlock];
+        // Else if for indirect blocks
+        } else if (block.inode[iOffset].indirect) {
 
-			// Read data from the inode block
-            disk_read(thedisk, block.inode[offsetI].direct[i], inodeBlock.data);
+			// Initialize indirect block
+            union fs_block indirectBlock;
 
-			// Iterate through the block
-            for (j = 0; j < BLOCK_SIZE; j++) {
+			// Reset flag variable
+			diskReadAborted = false;
 
-				// Return the bytes if its greater than the length
-                if (bytesR >= length) {
-                    return bytesR;
-                }
+			// Set signal handler to catch abort signal
+			signal(SIGABRT, abort_handler);
 
-				// If the head is greater than the current, update current
-                if (currO < headO) {
-                    currO++;
-                    continue;
-                }
+			// Check if disk_read fails
+			disk_read(thedisk, block.inode[iOffset].indirect, indirectBlock.data);
 
-				// Save the data and update the bytes
-                data[bytesR] = inodeBlock.data[j];
-                bytesR++;
+			// Check if disk_read aborted
+			if (diskReadAborted) {
+				printf("Error: Disk read failed\n");
+				return -1;
+			}
 
-            }
+			// Update pointer
+            pointer = indirectBlock.pointers[dataBlock - POINTERS_PER_INODE];
+
         }
-    }
 
-	// Check if indirect blocks exist
-    if (block.inode[offsetI].indirect > 0) {
+		// Reset flag variable
+		diskReadAborted = false;
 
-		// Read indirect block data
-        disk_read(thedisk, block.inode[offsetI].indirect, indirectBlock.data);
+		// Set signal handler to catch abort signal
+		signal(SIGABRT, abort_handler);
 
-		// Iterate through the pointers in a block
-        for (k = 0; k < POINTERS_PER_BLOCK; k++) {
+		// Check if disk_read fails
+		disk_read(thedisk, pointer, block.data);
 
-			// Check if pointers exist
-            if (indirectBlock.pointers[k] > 0) {
+		// Check if disk_read aborted
+		if (diskReadAborted) {
+			printf("Error: Disk read failed\n");
+			return -1;
+		}
 
-				// If head is greater than current, update current
-                if (currB < headB) {
-                    currB++;
-                    continue;
-                }
+		// Iterate through the blocks before reaching block size
+        for (int i = (dataOffset % BLOCK_SIZE); i < BLOCK_SIZE; i++) {
 
-				// Read data from inode block
-                disk_read(thedisk, indirectBlock.pointers[k], inodeBlock.data);
-
-				// Iterate through the block
-                for (l = 0; l < BLOCK_SIZE; l++) {
-
-					// Check if the bytes are greater than or equal to length, if so, return bytes
-                    if (bytesR >= length) {
-                        return bytesR;
-                    }
-
-					// If head is greater than current, update current
-                    if (currO < headO) {
-                        currO++;
-                        continue;
-                    }
-
-					// Save the data and update the bytes
-                    data[bytesR] = inodeBlock.data[l];
-                    bytesR++;
-					
-                }
+			// Check if offset is greater than the size or if the bytes read are greater than the length to break
+            if (offset >= block.inode[iOffset].size || bytesRead >= length) {
+                break;
             }
+
+			// Update the data in the block
+            data[bytesRead] = block.data[i];
+
+			// Increase the offset and the bytes read
+            offset++;
+            bytesRead++;
+
         }
+
+		// Re-initialize data offset
+        dataOffset = 0;
+
+		// Increment data block
+        dataBlock++;
+
     }
 
-	// Return bytes
-	return bytesR;
+	// Return the bytes read
+    return bytesRead;
 
 }
 
 // Function to write data to a valid inode
 int fs_write( int inumber, const char *data, int length, int offset )
 {
-
+	
 	// Write data to a valid inode. Copy "length" bytes from the pointer "data" into the inode
 	// starting at "offset" bytes. Allocate any necessary direct and indirect blocks in the process. Return
 	// the number of bytes actually written. The number of bytes actually written could be smaller than
@@ -687,10 +690,6 @@ int fs_write( int inumber, const char *data, int length, int offset )
         return 0;
     }
 
-	/// **** FUNCTIONALITY MISSING ****
-
-
-
 	return 0;
-
+	
 }
