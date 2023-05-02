@@ -22,18 +22,6 @@ bool isMounted = false;
 int * freeBitmapBlock;
 time_t timeTemp;
 
-// Define a flag variable to track if disk aborted
-static bool diskAborted = false;
-
-// Signal handler to catch abort signal
-void abort_handler(int sig) {
-
-    diskAborted = true;
-    signal(sig, SIG_DFL);
-    abort();
-
-}
-
 // Global variables
 union fs_block currentFreeBlock;
 
