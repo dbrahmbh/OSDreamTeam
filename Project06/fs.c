@@ -110,7 +110,7 @@ void fs_debug()
 	union fs_block indirectBlock;
 
 	// For loop to iterate through all the inodeblocks
-	for (i = 1; i < inodeblocksNum + 1; i++) {
+	for (i = 0; i < inodeblocksNum; i++) {
 
 		// Use disk_read function to read the data from the blocks
 		disk_read(thedisk, i, inodeBlock.data);
@@ -118,11 +118,16 @@ void fs_debug()
 		// For loop to go through all the inodes in an individual block
 		for(j = 0; j < INODES_PER_BLOCK; j++) {
 
+			// Check if inode is a dead inode to ignore it
+			if (i == 0 && j == 0) {
+    			continue;
+			}
+
 			// Check if the inode is valid
 			if (inodeBlock.inode[j].isvalid == 1) {
 
 				// Set up the inode number
-				inodeNum = (i - 1) * INODES_PER_BLOCK + j + 1;
+				inodeNum = (i - 1) * INODES_PER_BLOCK + j;
 
 				// Print the individual inode's data
 				printf("inode %d:\n", inodeNum);
@@ -327,13 +332,18 @@ int fs_create()
 	int inumber;
 
 	// Iterate through all the inodes
-	for (i = 1; i <= inodeblocksNum; i++) {
+	for (i = 1; i <= inodeblocksNum + 1; i++) {
 
 		// Read the block data
 		disk_read(thedisk, i, block.data);
 
 		// Iterate through the inodes in a block
 		for (j = 0; j < INODES_PER_BLOCK; j++) {
+
+			// Check for dead inode to skip
+			if (i == 1 && j == 0) {
+                continue;
+            }
 
 			// Check if the inode is valid
 			if (block.inode[j].isvalid == 0) {
@@ -387,7 +397,7 @@ int fs_create()
 				disk_write(thedisk, i, block.data);
 
 				// Calculate inumber
-				inumber = ((i - 1) * INODES_PER_BLOCK) + j + 1;
+				inumber = (i - 1) * INODES_PER_BLOCK + j;
 
 				// Return inumber
 				return inumber;
@@ -407,7 +417,7 @@ int fs_delete( int inumber )
 	// Delete the inode indicated by the inumber. Release all data and indirect blocks
 	// assigned to this inode and return them to the free block map. On success, return one. On failure,
 	// return 0.
-
+	
 	// Check if filesystem is not mounted
 	if (!isMounted) {
 		printf("Error: Filesystem not mounted\n");
@@ -422,8 +432,8 @@ int fs_delete( int inumber )
 
 	// Initialize inodes number, block number and offset, and variables for iteration
 	int inodesNum = block.super.ninodes;
-	int blockNum = (inumber - 1) / INODES_PER_BLOCK + 1;
-	int offset = (inumber - 1) % INODES_PER_BLOCK;
+	int blockNum = inumber / INODES_PER_BLOCK + 1;
+	int offset = inumber % INODES_PER_BLOCK;
 	int i = 0;
 	int j = 0;
 
@@ -471,8 +481,8 @@ int fs_delete( int inumber )
 		for (j = 0; j < POINTERS_PER_BLOCK; j++) {
 			
 			// Check if pointers exist to delete
-			if (indirectBlock.pointers[i] > 0) {
-				freeBitmapBlock[indirectBlock.pointers[i]] = 0;
+			if (indirectBlock.pointers[j] > 0) {
+				freeBitmapBlock[indirectBlock.pointers[j]] = 0;
 			}
 			
 		}
@@ -515,18 +525,18 @@ int fs_getsize( int inumber )
 	}
 
 	// Initialize offset and blocknum
-	int blockNum = (inumber - 1) / (INODES_PER_BLOCK) + 1;
+	int blockNum = inumber / (INODES_PER_BLOCK) + 1;
 	disk_read(thedisk, blockNum, block.data);
-	int maskOffset = (inumber - 1) % INODES_PER_BLOCK;
+	int offset = inumber % INODES_PER_BLOCK;
 
-	// Check if offset is valis
-	if (block.inode[maskOffset].isvalid == 0) {
+	// Check if offset is valid
+	if (block.inode[offset].isvalid == 0) {
 		printf("Error: Given inode does not seem to exist\n");
 		return -1;
 	}
 
 	// Return logical size of given inode in bytes
-	return block.inode[maskOffset].size;
+	return block.inode[offset].size;
 
 }
 
