@@ -24,7 +24,6 @@ time_t timeTemp;
 
 // Global variables
 union fs_block currentFreeBlock;
-#define MAX_BLOCKS_PER_FILE 150
 
 // Function to create a new filesystem on the disk and destroy any data already present
 int fs_format()
@@ -782,7 +781,7 @@ int fs_write( int inumber, const char *data, int length, int offset )
 		disk_read(thedisk, blockAddress, indirectBlock.data);
 
 		// While conditions are met, iterate through the indirect block to allocate and write data blocks
-		while (blockIndex < MAX_BLOCKS_PER_FILE && bytesWritten < length) {
+		while (bytesWritten < length) {	
 
 			// If the block is not allocated, allocate it
 			if (indirectBlock.pointers[blockIndex - POINTERS_PER_INODE] == 0) {
