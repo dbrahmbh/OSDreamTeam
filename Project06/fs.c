@@ -421,6 +421,7 @@ int fs_create()
 		}
 	}
 
+	// Returns 0 if there are no more free inodes available, indicating the inode table is full (and also that zero isn't a valid inode number)
 	return 0;
 
 }
