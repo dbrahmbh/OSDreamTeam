@@ -25,6 +25,22 @@ time_t timeTemp;
 // Global variables
 union fs_block currentFreeBlock;
 
+// Function to get a free block
+int getFreeBlock( struct disk *thedisk ) {
+
+	int i;
+
+	for (i = 0; i < disk_nblocks(thedisk); i++) {
+		if (freeBitmapBlock[i] == 0) {
+			freeBitmapBlock[i] = 1;
+			return i;
+		}
+	}
+
+	return 0;
+
+}
+
 // Function to create a new filesystem on the disk and destroy any data already present
 int fs_format()
 {
@@ -109,7 +125,7 @@ void fs_debug()
 	union fs_block indirectBlock;
 
 	// For loop to iterate through all the inodeblocks
-	for (i = 0; i < inodeblocksNum; i++) {
+	for (i = 1; i <= inodeblocksNum; i++) {
 
 		// Use disk_read function to read the data from the blocks
 		disk_read(thedisk, i, inodeBlock.data);
@@ -118,7 +134,7 @@ void fs_debug()
 		for(j = 0; j < INODES_PER_BLOCK; j++) {
 
 			// Check if inode is a dead inode to ignore it
-			if (i == 0 && j == 0) {
+			if (i == 1 && j == 0) {
     			continue;
 			}
 
@@ -243,7 +259,7 @@ int fs_mount()
 	int ninodeblocksTemp = block.super.ninodeblocks;
 
 	// Initialize the current free bitmap block using malloc
-	freeBitmapBlock = malloc(nblocksTemp * sizeof(int));
+	freeBitmapBlock = calloc(nblocksTemp, sizeof(int));
 	freeBitmapBlock[0] = 1;
 
 	// Initialize the indirect block and variables for iteration
@@ -567,8 +583,8 @@ int fs_read( int inumber, char *data, int length, int offset )
     }
 
     // Check if offset is valid
-    if (offset > block.inode[iOffset].size) {
-        printf("Error: Offset is greater than file size\n");
+    if (offset >= block.inode[iOffset].size) {
+        //printf("Error: Offset is greater than file size\n");
         return 0;
     }
 
@@ -610,7 +626,7 @@ int fs_read( int inumber, char *data, int length, int offset )
     }
 
     // Iterate through to read data from the indirect blocks, if any
-    if (blockIndex < POINTERS_PER_INODE && block.inode[iOffset].indirect) {
+    if (blockIndex >= POINTERS_PER_INODE && bytesRead < length && offset < block.inode[iOffset].size && block.inode[iOffset].indirect) {
 
 		// Initialize block address
         size_t blockAddress = block.inode[iOffset].indirect;
@@ -684,12 +700,6 @@ int fs_write( int inumber, const char *data, int length, int offset )
 		return 0;
 	}
 
-	// Check if the offset is valid
-	if (offset > block.inode[iOffset].size) {
-		printf("Error: Offset is greater than file size\n");
-		return 0;
-	}
-
 	// Initialize the bytes written
 	int bytesWritten = 0;
 
@@ -704,16 +714,13 @@ int fs_write( int inumber, const char *data, int length, int offset )
 		if (block.inode[iOffset].direct[blockIndex] == 0) {
 			
 			// Allocate the block
-			block.inode[iOffset].direct[blockIndex] = freeBitmapBlock[block.inode[iOffset].direct[blockIndex]] = 0;
+			block.inode[iOffset].direct[blockIndex] = getFreeBlock(thedisk);
 
 			// Check if the disk is full and return the bytes written
 			if (block.inode[iOffset].direct[blockIndex] == 0) {
 				printf("Error: Disk is full\n");
 				return bytesWritten;
 			}
-
-			// Increase the size of the block
-			block.inode[iOffset].size += BLOCK_SIZE;
 
 			// Write data to the disk
 			disk_write(thedisk, inodeBlock, block.data);
@@ -724,7 +731,7 @@ int fs_write( int inumber, const char *data, int length, int offset )
 		size_t blockAddress = block.inode[iOffset].direct[blockIndex];
 
 		// Initialize a data block and read it
-		union fs_block dataBlock;
+		union fs_block dataBlock = {{0}};
 		disk_read(thedisk, blockAddress, dataBlock.data);
 
 		// Iterate through the block to copy data from the buffer
@@ -736,6 +743,9 @@ int fs_write( int inumber, const char *data, int length, int offset )
 			// Increment bytes written and offset
 			bytesWritten++;
 			offset++;
+			
+			// Increase the size of the block
+			block.inode[iOffset].size++;
 
 		}
 
@@ -751,22 +761,19 @@ int fs_write( int inumber, const char *data, int length, int offset )
 	}
 
 	// Iterate through to write data to the indirect blocks, if any
-	if (blockIndex < POINTERS_PER_INODE) {
+	if (blockIndex >= POINTERS_PER_INODE && bytesWritten < length && blockIndex < POINTERS_PER_INODE + POINTERS_PER_BLOCK) {
 
 		// If the indirect block is not allocated, allocate it
 		if (!block.inode[iOffset].indirect) {
 
 			// Allocate the block
-			block.inode[iOffset].indirect = freeBitmapBlock[block.inode[iOffset].indirect] = 0;
+			block.inode[iOffset].indirect = getFreeBlock(thedisk);
 
 			// Check if disk is full and return bytes written
-			if (!block.inode[iOffset].indirect) {
+			if (block.inode[iOffset].indirect == 0) {
 				printf("Error: Disk is full\n");
 				return bytesWritten;
 			}
-
-			// Increase the inode size
-			block.inode[iOffset].size += BLOCK_SIZE;
 
 			// Write data to disk
 			disk_write(thedisk, inodeBlock, block.data);
@@ -777,7 +784,7 @@ int fs_write( int inumber, const char *data, int length, int offset )
 		size_t blockAddress = block.inode[iOffset].indirect;
 
 		// Initialize a new indirect block and read it
-		union fs_block indirectBlock;
+		union fs_block indirectBlock = {{0}};
 		disk_read(thedisk, blockAddress, indirectBlock.data);
 
 		// While conditions are met, iterate through the indirect block to allocate and write data blocks
@@ -787,7 +794,7 @@ int fs_write( int inumber, const char *data, int length, int offset )
 			if (indirectBlock.pointers[blockIndex - POINTERS_PER_INODE] == 0) {
 
 				// Allocate the block
-				indirectBlock.pointers[blockIndex - POINTERS_PER_INODE] = freeBitmapBlock[indirectBlock.pointers[blockIndex - POINTERS_PER_INODE]] = 0;
+				indirectBlock.pointers[blockIndex - POINTERS_PER_INODE] = getFreeBlock(thedisk);
 
 				// Check if disk is full
 				if (indirectBlock.pointers[blockIndex - POINTERS_PER_INODE] == 0) {
@@ -795,11 +802,8 @@ int fs_write( int inumber, const char *data, int length, int offset )
 					return bytesWritten;
 				}
 
-				// Increase the inode size
-				block.inode[iOffset].size += BLOCK_SIZE;
-
 				// Write data to the disk
-				disk_write(thedisk, inodeBlock, block.data);
+				disk_write(thedisk, blockAddress, indirectBlock.data);
 
 			}
 
@@ -807,7 +811,7 @@ int fs_write( int inumber, const char *data, int length, int offset )
 			size_t dataBlockAddress = indirectBlock.pointers[blockIndex - POINTERS_PER_INODE];
 
 			// Initialize a data block and read it
-			union fs_block dataBlock;
+			union fs_block dataBlock = {{0}};
 			disk_read(thedisk, dataBlockAddress, dataBlock.data);
 
 			// Iterate through the block to copy data from the buffer
@@ -819,6 +823,9 @@ int fs_write( int inumber, const char *data, int length, int offset )
 				// Increment bytes written and offset
 				bytesWritten++;
 				offset++;
+
+				// Increase the inode size
+				block.inode[iOffset].size++;
 
 			}
 
@@ -833,21 +840,11 @@ int fs_write( int inumber, const char *data, int length, int offset )
 
 		}
 
-		// Write the modified indirect block to the disk
-		disk_write(thedisk, blockAddress, indirectBlock.data);
 
 	}
 
-	// Check if the offset plus the length is greater than the size
-	if (offset + length > block.inode[iOffset].size) {
-
-		// Update the inode size
-		block.inode[iOffset].size = offset + length;
-
-		// Write data to the disk
-		disk_write(thedisk, inodeBlock, block.data);
-
-	}
+	// Write data to the disk
+	disk_write(thedisk, inodeBlock, block.data);
 
 	// Return the number of bytes actually written
 	return bytesWritten;
